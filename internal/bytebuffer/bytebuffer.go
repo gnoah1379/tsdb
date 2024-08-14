@@ -34,11 +34,11 @@ func NewBuffer(buf []byte) *Buffer {
 	}
 }
 
-func (b *Buffer) ReadAll() []byte {
+func (b *Buffer) ReadAll() ([]byte, error) {
 	length := b.Len()
 	buf := make([]byte, length)
-	copy(buf, b.Next(length))
-	return buf
+	_, err := b.Read(buf)
+	return buf, err
 }
 
 func (b *Buffer) WriteVarUint(i uint64) {

@@ -3,11 +3,12 @@ package tsdb
 import (
 	"github.com/dgraph-io/badger/v4"
 	"time"
+	"tsdb/internal/isync"
 )
 
 type DB struct {
-	storage   *badger.DB
-	retention time.Duration
+	storage    *badger.DB
+	metaLocker isync.KeyLock
 }
 
 type Options struct {
@@ -34,10 +35,8 @@ func Open(opts *Options) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return &DB{
-		storage:   storage,
-		retention: opts.Retention,
+		storage: storage,
 	}, nil
 }
 
