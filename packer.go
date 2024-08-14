@@ -3,21 +3,50 @@ package tsdb
 import (
 	"bytes"
 	"errors"
-	"io"
-	"math"
+	"github.com/vmihailenco/msgpack/v5"
 	"time"
 	"tsdb/internal/bytebuffer"
 	"tsdb/internal/isync"
 )
 
 var ErrInvalidKey = errors.New("invalid key")
-var packerPool = isync.Pool[*Packer]{
-	New: func() *Packer {
-		return &Packer{buf: bytebuffer.NewBuffer(nil)}
-	},
-	Reset: func(p *Packer) {
-		p.buf.Reset()
-	},
+var (
+	encPool = isync.Pool[*fieldEncoder]{
+		New: func() *fieldEncoder {
+			buf := bytebuffer.Get()
+			return &fieldEncoder{
+				Encoder: msgpack.NewEncoder(buf),
+				buf:     buf,
+			}
+		},
+		Reset: func(enc *fieldEncoder) {
+			enc.buf.Reset()
+			enc.Reset(enc.buf)
+		},
+	}
+	decPool = isync.Pool[*fieldDecoder]{
+		New: func() *fieldDecoder {
+			buf := bytebuffer.Get()
+			return &fieldDecoder{
+				Decoder: msgpack.NewDecoder(buf),
+				buf:     buf,
+			}
+		},
+		Reset: func(dec *fieldDecoder) {
+			dec.buf.Reset()
+			dec.Reset(dec.buf)
+		},
+	}
+)
+
+type fieldEncoder struct {
+	*msgpack.Encoder
+	buf *bytebuffer.Buffer
+}
+
+type fieldDecoder struct {
+	*msgpack.Decoder
+	buf *bytebuffer.Buffer
 }
 
 const (
@@ -25,102 +54,100 @@ const (
 	KeySep = ','
 )
 
-type Packer struct {
-	buf *bytebuffer.Buffer
-}
-
-func (p *Packer) packPoint(point Point) (key []byte, value []byte) {
-	key = p.packKey(point.Measurement, point.Time, point.Labels)
-	value = p.packFields(point.Fields)
+func packPoint(point Point) (key []byte, value []byte) {
+	key = packKey(point.Measurement, point.Time, point.Labels)
+	value = packFields(point.Fields)
 	return key, value
 }
 
-func (p *Packer) packFields(fields map[string]float64) []byte {
-	p.buf.Reset()
-	for key, val := range fields {
-		p.buf.WriteString(key)
-		p.buf.WriteByte(KVSep)
-		bits := math.Float64bits(val)
-		p.buf.WriteVarUint(bits)
+func packFields(fields map[string]any) []byte {
+	enc := encPool.Get()
+	defer encPool.Put(enc)
+	err := enc.EncodeMap(fields)
+	if err != nil {
+		return nil
 	}
-	return bytes.Clone(p.buf.Bytes())
+	return enc.buf.ReadAll()
 }
 
-func (p *Packer) unpackFields(fieldsRaw []byte) (fields map[string]float64, err error) {
-	defer func() {
-		if err == io.EOF {
-			err = nil
-		}
-	}()
-	fields = make(map[string]float64)
-	p.buf.Reset()
-	p.buf.Write(fieldsRaw)
-	for {
-		keyBytes, err := p.buf.ReadBytes(KVSep)
-		if err != nil {
-			return fields, err
-		}
-		key := string(keyBytes[:len(keyBytes)-1])
-		bits, err := p.buf.ReadVarUint()
-		if err != nil {
-			return fields, err
-		}
-		fields[key] = math.Float64frombits(bits)
+func unpackFields(fieldsRaw []byte) (fields map[string]any, err error) {
+	dec := decPool.Get()
+	defer decPool.Put(dec)
+	dec.buf.Write(fieldsRaw)
+	fields, err = dec.DecodeMap()
+	if err != nil {
+		return nil, err
 	}
+	return fields, nil
 }
 
-func (p *Packer) packKey(measurement string, t time.Time, labels map[string]string) []byte {
-	p.packKeyPrefix(measurement, t)
+func packKey(measurement string, t time.Time, labels map[string]string) []byte {
+	buf := bytebuffer.Get()
+	defer bytebuffer.Put(buf)
+	packKeyPrefix(measurement, t)
 	for key, val := range labels {
-		p.buf.WriteString(key)
-		p.buf.WriteByte(KVSep)
-		p.buf.WriteString(val)
-		p.buf.WriteByte(KeySep)
+		buf.WriteString(key)
+		buf.WriteByte(KVSep)
+		buf.WriteString(val)
+		buf.WriteByte(KeySep)
 	}
-	return bytes.Clone(p.buf.Bytes())
+	return buf.ReadAll()
 }
 
-func (p *Packer) packKeyPrefix(measurement string, t time.Time) []byte {
-	p.buf.Reset()
-	p.buf.WriteString(measurement)
-	p.buf.WriteByte(KeySep)
-	p.buf.WriteInt64(t.Unix())
-	p.buf.WriteInt32(int32(t.Nanosecond()))
-	p.buf.WriteByte(KeySep)
-	return bytes.Clone(p.buf.Bytes())
+func packLabels(labels map[string]string) []byte {
+	buf := bytebuffer.Get()
+	defer bytebuffer.Put(buf)
+	for key, val := range labels {
+		buf.WriteString(key)
+		buf.WriteByte(KVSep)
+		buf.WriteString(val)
+		buf.WriteByte(KeySep)
+	}
+	return buf.ReadAll()
+
 }
 
-func (p *Packer) unpackKey(storageKey []byte) (measurement string, t time.Time, labels map[string]string, err error) {
-	p.buf.Reset()
-	p.buf.Write(storageKey)
-	measurementBytes, err := p.buf.ReadBytes(KeySep)
+func packKeyPrefix(measurement string, t time.Time) []byte {
+	buf := bytebuffer.Get()
+	defer bytebuffer.Put(buf)
+	buf.WriteString(measurement)
+	buf.WriteByte(KeySep)
+	buf.WriteInt64(t.Unix())
+	buf.WriteInt32(int32(t.Nanosecond()))
+	buf.WriteByte(KeySep)
+	return buf.ReadAll()
+}
+
+func unpackKey(storageKey []byte) (measurement string, t time.Time, labels map[string]string, err error) {
+	buf := bytebuffer.Get()
+	defer bytebuffer.Put(buf)
+	buf.Write(storageKey)
+	measurementBytes, err := buf.ReadBytes(KeySep)
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
 	measurement = string(measurementBytes[:len(measurementBytes)-1])
-	sec, err := p.buf.ReadInt64()
+	sec, err := buf.ReadInt64()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
-	nsec, err := p.buf.ReadInt32()
+	nsec, err := buf.ReadInt32()
 	if err != nil {
 		return "", time.Time{}, nil, err
 	}
 	t = time.Unix(sec, int64(nsec))
-	_, err = p.buf.ReadByte()
-	if err != nil {
-		return "", time.Time{}, nil, ErrInvalidKey
-	}
-	labels = make(map[string]string)
-	if p.buf.Len() == 0 {
+	buf.Next(1)
+	if buf.Len() == 0 {
 		return measurement, t, labels, nil
 	}
-
-	kvs := bytes.Split(bytes.TrimSuffix(p.buf.Bytes(), []byte{KeySep}), []byte{KeySep})
+	kvs := bytes.Split(bytes.TrimSuffix(buf.Bytes(), []byte{KeySep}), []byte{KeySep})
 	for _, kv := range kvs {
 		parts := bytes.Split(kv, []byte{KVSep})
 		if len(parts) != 2 {
 			return "", time.Time{}, nil, ErrInvalidKey
+		}
+		if labels == nil {
+			labels = make(map[string]string)
 		}
 		labels[string(parts[0])] = string(parts[1])
 	}

@@ -10,9 +10,7 @@ type entrySetter interface {
 }
 
 func (db *DB) insert(txn entrySetter, p Point) error {
-	packer := packerPool.Get()
-	defer packerPool.Put(packer)
-	key, val := packerPool.Get().packPoint(p)
+	key, val := packPoint(p)
 	entry := badger.NewEntry(key, val).WithTTL(db.retention)
 	return txn.SetEntry(entry)
 }

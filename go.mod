@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.6.1
 )
 
 require (
@@ -22,6 +22,8 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/net v0.7.0 // indirect
 	golang.org/x/sys v0.5.0 // indirect

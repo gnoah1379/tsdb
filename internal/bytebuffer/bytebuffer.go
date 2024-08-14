@@ -4,7 +4,25 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"tsdb/internal/isync"
 )
+
+var pool = isync.Pool[*Buffer]{
+	New: func() *Buffer {
+		return NewBuffer(nil)
+	},
+	Reset: func(b *Buffer) {
+		b.Reset()
+	},
+}
+
+func Get() *Buffer {
+	return pool.Get()
+}
+
+func Put(b *Buffer) {
+	pool.Put(b)
+}
 
 type Buffer struct {
 	*bytes.Buffer
@@ -14,6 +32,13 @@ func NewBuffer(buf []byte) *Buffer {
 	return &Buffer{
 		Buffer: bytes.NewBuffer(buf),
 	}
+}
+
+func (b *Buffer) ReadAll() []byte {
+	length := b.Len()
+	buf := make([]byte, length)
+	copy(buf, b.Next(length))
+	return buf
 }
 
 func (b *Buffer) WriteVarUint(i uint64) {

@@ -9,8 +9,25 @@ import (
 type Point struct {
 	Measurement string
 	Labels      map[string]string
-	Fields      map[string]float64
-	Time        time.Time
+	DataPoint
+}
+
+type DataPoint struct {
+	Fields map[string]any
+	Time   time.Time
+}
+
+func (d *DataPoint) MergeFields(d2 DataPoint) {
+	if d2.Fields == nil {
+		return
+	}
+	if d.Fields == nil {
+		d.Fields = d2.Fields
+		return
+	}
+	for k, v := range d2.Fields {
+		d.Fields[k] = v
+	}
 }
 
 func (p Point) String() string {
