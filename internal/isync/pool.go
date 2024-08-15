@@ -1,11 +1,24 @@
 package isync
 
-import "sync"
+import (
+	"sync"
+)
 
 type Pool[T any] struct {
 	New   func() T
 	Reset func(T)
 	p     sync.Pool
+}
+
+type ResetAble interface {
+	Reset()
+}
+
+func ResetAblePool[T ResetAble](fn func() T) Pool[T] {
+	return Pool[T]{
+		New:   fn,
+		Reset: func(x T) { x.Reset() },
+	}
 }
 
 func (p *Pool[T]) Get() (val T) {

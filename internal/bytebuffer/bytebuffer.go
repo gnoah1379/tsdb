@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"math"
 	"tsdb/internal/isync"
 )
 
@@ -18,6 +19,12 @@ var pool = isync.Pool[*Buffer]{
 
 func Get() *Buffer {
 	return pool.Get()
+}
+
+func Read(data []byte) *Buffer {
+	b := pool.Get()
+	b.Write(data)
+	return b
 }
 
 func Put(b *Buffer) {
@@ -41,20 +48,11 @@ func (b *Buffer) ReadAll() ([]byte, error) {
 	return buf, err
 }
 
-func (b *Buffer) WriteVarUint(i uint64) {
-	b.Write(binary.AppendUvarint(b.AvailableBuffer(), i))
-}
+func (b *Buffer) ReadN(n int) ([]byte, error) {
+	buf := make([]byte, n)
+	_, err := b.Read(buf)
+	return buf, err
 
-func (b *Buffer) ReadVarUint() (uint64, error) {
-	return binary.ReadUvarint(b)
-}
-
-func (b *Buffer) WriteVarInt(i int64) {
-	b.Write(binary.AppendVarint(b.AvailableBuffer(), i))
-}
-
-func (b *Buffer) ReadVarInt() (int64, error) {
-	return binary.ReadVarint(b)
 }
 
 func (b *Buffer) WriteInt64(x int64) {
@@ -65,25 +63,41 @@ func (b *Buffer) WriteInt64(x int64) {
 	b.Write(binary.BigEndian.AppendUint64(b.AvailableBuffer(), ux))
 }
 
+func (b *Buffer) WriteUint64(x uint64) {
+	b.Write(binary.BigEndian.AppendUint64(b.AvailableBuffer(), x))
+
+}
+
 func (b *Buffer) WriteInt32(x int32) {
 	ux := uint32(x) << 1
 	if x < 0 {
 		ux = ^ux
 	}
 	b.Write(binary.BigEndian.AppendUint32(b.AvailableBuffer(), ux))
+}
 
+func (b *Buffer) WriteFloat64(x float64) {
+	b.Write(binary.BigEndian.AppendUint64(b.AvailableBuffer(), math.Float64bits(x)))
 }
 
 func (b *Buffer) ReadInt64() (int64, error) {
-	if b.Len() < 8 {
-		return 0, io.EOF
+	ux, err := b.ReadUint64()
+	if err != nil {
+		return 0, err
 	}
-	ux := binary.BigEndian.Uint64(b.Next(8))
 	x := int64(ux >> 1)
 	if ux&1 != 0 {
 		x = ^x
 	}
 	return x, nil
+}
+
+func (b *Buffer) ReadUint64() (uint64, error) {
+	if b.Len() < 8 {
+		return 0, io.EOF
+	}
+	return binary.BigEndian.Uint64(b.Next(8)), nil
+
 }
 
 func (b *Buffer) ReadInt32() (int32, error) {
@@ -96,4 +110,12 @@ func (b *Buffer) ReadInt32() (int32, error) {
 		x = ^x
 	}
 	return x, nil
+}
+
+func (b *Buffer) ReadFloat64() (float64, error) {
+	if b.Len() < 8 {
+		return 0, io.EOF
+	}
+	ux := binary.BigEndian.Uint64(b.Next(8))
+	return math.Float64frombits(ux), nil
 }
