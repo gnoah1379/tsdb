@@ -9,12 +9,11 @@ import (
 type Point struct {
 	Measurement string
 	Labels      map[string]string
-	DataPoint
+	Fields      map[string]float64
+	Time        time.Time
 }
 
-type DataPoint struct {
-	Fields map[string]float64
-	Time   time.Time
+type DataEntry struct {
 }
 
 func (p Point) String() string {

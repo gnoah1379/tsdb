@@ -41,15 +41,17 @@ func encodePointKey(measurement string, ts time.Time, labels map[string]string) 
 	buf.WriteInt64(ts.Unix())
 	buf.WriteInt32(int32(ts.Nanosecond()))
 	buf.WriteByte(pointKeySep)
-	sortedLabels := sortLabels(labels)
-	labelsHash := hashLabel(sortedLabels)
-	buf.WriteUint64(labelsHash)
-	buf.WriteByte(pointKeySep)
-	writeLabels(buf, sortedLabels)
+	if labels == nil {
+		sortedLabels := sortLabels(labels)
+		labelsHash := hashLabel(sortedLabels)
+		buf.WriteUint64(labelsHash)
+		buf.WriteByte(pointKeySep)
+		writeLabels(buf, sortedLabels)
+	}
 	return buf.ReadAll()
 }
 
-func decodePointKey(data []byte) (measurement string, ts time.Time, hash uint64, labelsRaw []byte, err error) {
+func decodePointKey(data []byte) (measurement string, ts time.Time, hash uint64, labels map[string]string, err error) {
 	buf := bytebuffer.Read(data)
 	defer bytebuffer.Put(buf)
 	if measurement, err = buf.ReadString(pointKeySep); err != nil {
@@ -70,36 +72,33 @@ func decodePointKey(data []byte) (measurement string, ts time.Time, hash uint64,
 	if _, err = buf.ReadByte(); err != nil {
 		return
 	}
-	hash, err = buf.ReadUint64()
-	if err != nil {
-		return
+	if buf.Len() > 8 {
+		hash, err = buf.ReadUint64()
+		if err != nil {
+			return
+		}
+		if _, err = buf.ReadByte(); err != nil {
+			return
+		}
+		labels = make(map[string]string)
+		var k, v string
+		for {
+			k, err = buf.ReadString(kvSep)
+			if len(k) == 0 || errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return
+			}
+			v, err = buf.ReadString(labelSep)
+			if err != nil {
+				return
+			}
+			labels[k] = v
+		}
 	}
-	if _, err = buf.ReadByte(); err != nil {
-		return
-	}
-	labelsRaw, err = buf.ReadAll()
-	return
-}
 
-func encodeLabels(labelRaw []byte) (map[string]string, error) {
-	buf := bytebuffer.Read(labelRaw)
-	defer bytebuffer.Put(buf)
-	labels := make(map[string]string)
-	for {
-		k, err := buf.ReadBytes(kvSep)
-		if len(k) == 0 || errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		v, err := buf.ReadString(labelSep)
-		if err != nil {
-			return nil, err
-		}
-		labels[string(k[:len(k)-1])] = v
-	}
-	return labels, nil
+	return
 }
 
 func encodePointFields(fields map[string]float64) ([]byte, error) {
